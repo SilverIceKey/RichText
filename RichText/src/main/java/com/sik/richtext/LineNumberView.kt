@@ -8,12 +8,9 @@ import android.graphics.Rect
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.AttributeSet
-import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.widget.EditText
-import android.widget.Toast
-import org.wordpress.aztec.AztecText
 
 class LineNumberView(context: Context, attrs: AttributeSet) : View(context, attrs) {
     /**
@@ -21,6 +18,12 @@ class LineNumberView(context: Context, attrs: AttributeSet) : View(context, attr
      * 行号画笔
      */
     private val lineNumberPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /**
+     * Edit text data
+     * 编辑器数据
+     */
+    private var editTextData: String = ""
 
     /**
      * Mark paint
@@ -295,15 +298,20 @@ class LineNumberView(context: Context, attrs: AttributeSet) : View(context, attr
             }
 
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                markChangeCheck(start, before, count)
-                dataNumSet()
+                if (editTextData != s) {
+                    markChangeCheck(start, before, count)
+                    dataNumSet()
+                }
             }
 
             override fun afterTextChanged(s: Editable?) {
-                editText.postDelayed({
-                    updateLineNumbers()
-                    checkPage(editText)
-                }, 20)
+                if (editTextData != s.toString()) {
+                    editTextData = s.toString()
+                    editText.postDelayed({
+                        updateLineNumbers()
+                        checkPage(editText)
+                    }, 20)
+                }
             }
 
         })
@@ -348,7 +356,12 @@ class LineNumberView(context: Context, attrs: AttributeSet) : View(context, attr
 //                }
 //            }
 //        }
-
+        if (editText is RichEditText) {
+            editText.setOnTextSizeChangeListener { line ->
+                updateLineNumbers(line)
+//                checkPage(editText)
+            }
+        }
     }
 
     private fun checkPage(editText: EditText) {
@@ -363,21 +376,41 @@ class LineNumberView(context: Context, attrs: AttributeSet) : View(context, attr
         }
         maxLineCount = editText.height / editText.lineHeight
         val lastMaxLineCount = editText.text.split("\n").takeLast(maxLineCount)
-        if (!lastMaxLineCount.all { it.length == 1 }) {
+        if (lastMaxLineCount.size < maxLineCount) {
             isCheckPageSet = true
-            val index = lastMaxLineCount.indexOfLast { it.isNotEmpty() }
-            for (i in 0 until maxLineCount - index) {
+            if (bindingEditText is RichEditText){
+                (bindingEditText as RichEditText).isStyleChange = true
+            }
+            for (i in 0 until maxLineCount - lastMaxLineCount.size) {
                 editText.append("\n")
             }
+            if (bindingEditText is RichEditText){
+                (bindingEditText as RichEditText).isStyleChange = false
+            }
             isCheckPageSet = false
+        } else {
+            if (!lastMaxLineCount.all { it.isEmpty() }) {
+                isCheckPageSet = true
+                if (bindingEditText is RichEditText){
+                    (bindingEditText as RichEditText).isStyleChange = true
+                }
+                val index = lastMaxLineCount.indexOfLast { it.isNotEmpty() }
+                for (i in 0 until maxLineCount) {
+                    editText.append("\n")
+                }
+                if (bindingEditText is RichEditText){
+                    (bindingEditText as RichEditText).isStyleChange = false
+                }
+                isCheckPageSet = false
+            }
         }
+
 //        }, 100)
     }
 
     /**
      * Update line numbers
      * 刷新行号
-     * @param editText
      */
     fun updateLineNumbers() {
         bindingEditText?.let {
@@ -401,6 +434,27 @@ class LineNumberView(context: Context, attrs: AttributeSet) : View(context, attr
                     }
                 })
             }
+        }
+    }
+
+    /**
+     * Update line numbers
+     * 刷新行号
+     * @param line
+     */
+    private fun updateLineNumbers(line: Int) {
+        if (line == -1) {
+            updateLineNumbers()
+        } else {
+            bindingEditText?.layout?.let {
+                this.lineNumberData.filter { it.lineNumber == line }.forEach { item ->
+                    item.apply {
+                        lineHeight =
+                            it.getLineBottom(lineNumber - 1) - it.getLineTop(lineNumber - 1)
+                    }
+                }
+            }
+            postInvalidate()
         }
     }
 

@@ -1,36 +1,34 @@
 package com.sik.richtextsample
 
+import android.Manifest
+import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
-import android.text.Spannable
-import android.text.SpannableString
-import android.text.style.ForegroundColorSpan
-import android.util.TypedValue
+import android.os.Environment
+import android.provider.Settings
+import android.text.Html
 import android.widget.Button
 import androidx.appcompat.app.AppCompatActivity
 import com.blankj.utilcode.util.FileIOUtils
 import com.blankj.utilcode.util.FileUtils
 import com.blankj.utilcode.util.LogUtils
+import com.blankj.utilcode.util.PermissionUtils
 import com.blankj.utilcode.util.ToastUtils
+import com.pspdfkit.document.PdfDocumentLoader
+import com.pspdfkit.document.html.HtmlToPdfConverter
 import com.sik.richtext.LineNumberView
 import com.sik.richtext.MarkData
-import com.sik.richtext.RichText
-import com.sik.richtext.SlideBar
-import org.wordpress.aztec.Aztec
-import org.wordpress.aztec.AztecExceptionHandler
-import org.wordpress.aztec.AztecText
-import org.wordpress.aztec.ITextFormat
-import org.wordpress.aztec.plugins.CssUnderlinePlugin
-import org.wordpress.aztec.toolbar.AztecToolbar
-import org.wordpress.aztec.toolbar.IAztecToolbarClickListener
-import org.wordpress.aztec.toolbar.ToolbarAction
-import org.wordpress.aztec.toolbar.ToolbarItems
+import com.sik.richtext.RichEditText
+import com.sik.richtext.RichEditTextFormat
+import org.apache.commons.text.StringEscapeUtils
 import java.io.File
 
-class MainActivity : AppCompatActivity(), AztecText.OnImeBackListener, IAztecToolbarClickListener {
+
+class MainActivity : AppCompatActivity() {
     companion object {
         private val HEADING =
-            "<h1>Heading 1</h1>" + "<h2>Heading 2</h2>" + "<h3>Heading 3</h3>" + "<h4>Heading 4</h4>" + "<h5>Heading 5</h5>" + "<h6>Heading 6</h6>"
+            "<h1>Heading 1</h1>" + "<h2><span style=\"color:#FF0000;\">Heading</span> 2</h2>" + "<h3>Heading 3</h3>" + "<h4>Heading 4</h4>" + "<h5>Heading 5</h5>" + "<h6>Heading 6</h6>"
         private val BOLD = "<b>Bold</b><br>"
         private val ITALIC = "<i style=\"color:darkred\">Italic</i><br>"
         private val UNDERLINE = "<u style=\"color:#ff0000\">Underline</u><br>"
@@ -68,13 +66,10 @@ class MainActivity : AppCompatActivity(), AztecText.OnImeBackListener, IAztecToo
 
     private lateinit var htmlFilePath: String
     private lateinit var lineNumberView: LineNumberView
-    protected lateinit var aztec: Aztec
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        val visualEditor = findViewById<RichText>(R.id.visual)
-        val toolbar = findViewById<AztecToolbar>(R.id.formatting_toolbar)
-        val slideBar = findViewById<SlideBar>(R.id.slide_bar)
+        val visualEditor = findViewById<RichEditText>(R.id.visual)
         htmlFilePath = cacheDir.absolutePath
         val htmlFile = File(htmlFilePath + File.separator + "htmlFileData.txt")
         FileUtils.createOrExistsFile(htmlFile)
@@ -82,86 +77,94 @@ class MainActivity : AppCompatActivity(), AztecText.OnImeBackListener, IAztecToo
         val html = FileIOUtils.readFile2String(htmlFile)
         lineNumberView = findViewById<LineNumberView>(R.id.line_number)
         lineNumberView.bindEditText(visualEditor)
-        visualEditor.postDelayed({
-            slideBar.bindEditText(visualEditor, lineNumberView)
-        }, 20)
-        findViewById<Button>(R.id.bold).setOnClickListener {
+        findViewById<Button>(R.id.mark_point).setOnClickListener {
             lineNumberView.addDataNum(MarkData().apply { position = visualEditor.selectionStart })
         }
-        findViewById<Button>(R.id.em).setOnClickListener {
+        findViewById<Button>(R.id.line_background).setOnClickListener {
             visualEditor.switchShowBackgroundLine()
         }
+        findViewById<Button>(R.id.title_1).setOnClickListener {
+            visualEditor.format(RichEditTextFormat.FORMAT_HEADING_1)
+        }
+        findViewById<Button>(R.id.title_2).setOnClickListener {
+            visualEditor.format(RichEditTextFormat.FORMAT_HEADING_2)
+        }
+        findViewById<Button>(R.id.bold).setOnClickListener {
+            visualEditor.format(RichEditTextFormat.FORMAT_BOLD)
+        }
+        findViewById<Button>(R.id.italic).setOnClickListener {
+            visualEditor.format(RichEditTextFormat.FORMAT_ITALIC)
+        }
+        findViewById<Button>(R.id.underline).setOnClickListener {
+            visualEditor.format(RichEditTextFormat.FORMAT_UNDERLINE)
+        }
+        findViewById<Button>(R.id.strikethrough).setOnClickListener {
+            visualEditor.format(RichEditTextFormat.FORMAT_STRIKETHROUGH)
+        }
+        findViewById<Button>(R.id.font_size).setOnClickListener {
+            visualEditor.format(RichEditTextFormat.FORMAT_FONT_SIZE, 50)
+        }
+        findViewById<Button>(R.id.font_color).setOnClickListener {
+            visualEditor.format(RichEditTextFormat.FORMAT_FONT_COLOR, Color.RED)
+        }
+        findViewById<Button>(R.id.align_left).setOnClickListener {
+            visualEditor.format(RichEditTextFormat.FORMAT_ALIGN_LEFT)
+        }
+        findViewById<Button>(R.id.align_center).setOnClickListener {
+            visualEditor.format(RichEditTextFormat.FORMAT_ALIGN_CENTER)
+        }
+        findViewById<Button>(R.id.align_right).setOnClickListener {
+            visualEditor.format(RichEditTextFormat.FORMAT_ALIGN_RIGHT)
+        }
         findViewById<Button>(R.id.previous).setOnClickListener {
-            LogUtils.i("字体大小:${visualEditor.textSize}")
-            if (visualEditor.textSize > 20) {
-                visualEditor.setTextSize(TypedValue.COMPLEX_UNIT_PX, visualEditor.textSize - 1)
-            }
-
         }
         findViewById<Button>(R.id.next).setOnClickListener {
-            println(visualEditor.toHtml())
+            val html = Html.toHtml(visualEditor.text)
+            val decodedHtml = StringEscapeUtils.unescapeHtml4(html)
+            val pdfDest = File("/sdcard/download/output.pdf")
+            HtmlToPdfConverter.fromHTMLString(this, "<html><body>${decodedHtml}</body></html>")
+                // Configure title for the created document.
+                .title("Converted document")
+                // Perform the conversion.
+                .convertToPdfAsync(pdfDest)
+                // Subscribe to the conversion result.
+                .subscribe({
+                    // Open and process the converted document.
+                    val document = PdfDocumentLoader.openDocument(this, Uri.fromFile(pdfDest))
+                }, {
+                    // Handle the error.
+                })
+            LogUtils.i("<html><body>${decodedHtml}</body></html>")
         }
         lineNumberView.setOnLineClickListener {
             ToastUtils.showShort("当前点击行号:${it.lineNumber}")
         }
-        toolbar.setToolbarItems(
-            ToolbarItems.BasicLayout(
-                ToolbarAction.HEADING,
-                ToolbarAction.BACKGROUND,
-                ToolbarAction.BOLD,
-                ToolbarAction.ITALIC,
-                ToolbarAction.UNDERLINE,
-                ToolbarAction.STRIKETHROUGH,
-                ToolbarAction.ALIGN_LEFT,
-                ToolbarAction.ALIGN_CENTER,
-                ToolbarAction.ALIGN_RIGHT,
-                ToolbarItems.PLUGINS
-            )
-        )
-        aztec = Aztec.with(visualEditor, toolbar, this).setOnImeBackListener(this)
-        if (!isRunningTest) {
-            aztec.visualEditor.enableCrashLogging(object :
-                AztecExceptionHandler.ExceptionHandlerHelper {
-                override fun shouldLog(ex: Throwable): Boolean {
-                    return true
-                }
-            })
-            aztec.visualEditor.setCalypsoMode(false)
-            aztec.addPlugin(CssUnderlinePlugin())
-            aztec.visualEditor.fromHtml(EXAMPLE)
-            println(EXAMPLE)
+        if (!PermissionUtils.isGranted(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+            PermissionUtils.permission(
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                Manifest.permission.MANAGE_EXTERNAL_STORAGE
+            ).request()
         }
+        if (!Environment.isExternalStorageManager()) {
+            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+            val uri: Uri = Uri.fromParts("package", "com.sik.richtextsample", null)
+            intent.data = uri
+            startActivity(intent)
+        }
+//        visualEditor.setText(Html.fromHtml(EXAMPLE))
+//        aztec = Aztec.with(visualEditor, toolbar, this).setOnImeBackListener(this)
+//        if (!isRunningTest) {
+//            aztec.visualEditor.enableCrashLogging(object :
+//                AztecExceptionHandler.ExceptionHandlerHelper {
+//                override fun shouldLog(ex: Throwable): Boolean {
+//                    return true
+//                }
+//            })
+//            aztec.visualEditor.setCalypsoMode(false)
+//            aztec.addPlugin(CssUnderlinePlugin())
+//            aztec.visualEditor.fromHtml(EXAMPLE)
+//            println(EXAMPLE)
+//        }
     }
 
-    override fun onImeBack() {
-
-    }
-
-    override fun onToolbarCollapseButtonClicked() {
-
-    }
-
-    override fun onToolbarExpandButtonClicked() {
-
-    }
-
-    override fun onToolbarFormatButtonClicked(format: ITextFormat, isKeyboardShortcut: Boolean) {
-
-    }
-
-    override fun onToolbarHeadingButtonClicked() {
-
-    }
-
-    override fun onToolbarHtmlButtonClicked() {
-
-    }
-
-    override fun onToolbarListButtonClicked() {
-
-    }
-
-    override fun onToolbarMediaButtonClicked(): Boolean {
-        return false
-    }
 }
