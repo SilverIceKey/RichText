@@ -7,8 +7,8 @@ import android.widget.EditText
  * 获取光标所在行号
  * @return
  */
-fun EditText.getSelectionLine(selectPosition: Int): Int {
-    return layout.getLineForOffset(selectPosition) + 1
+fun RichEditText.getSelectionLine(selectPosition: Int): Int {
+    return layout.getLineForOffset(selectPosition - getPageStartIndex()-1) + 1
 }
 
 /**
@@ -18,4 +18,13 @@ fun EditText.getSelectionLine(selectPosition: Int): Int {
  */
 fun EditText.getTextWithoutLastWrap(): String {
     return text.replace(Regex("\\n+$"), "")
+}
+
+/**
+ * Get line end
+ * 获取页尾
+ * @return
+ */
+fun EditText.getLineEnd(): Int {
+    return layout.getLineEnd(layout.getLineForVertical(height))
 }

@@ -10,6 +10,7 @@ import android.text.Editable
 import android.text.Layout
 import android.text.Spannable
 import android.text.SpannableStringBuilder
+import android.text.StaticLayout
 import android.text.TextWatcher
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.AlignmentSpan
@@ -20,6 +21,7 @@ import android.text.style.StrikethroughSpan
 import android.text.style.StyleSpan
 import android.text.style.UnderlineSpan
 import android.util.AttributeSet
+import android.util.TypedValue
 import androidx.appcompat.widget.AppCompatEditText
 import com.sik.richtext.RichEditTextFormat.FORMAT_ALIGN_CENTER
 import com.sik.richtext.RichEditTextFormat.FORMAT_ALIGN_LEFT
@@ -37,9 +39,30 @@ import com.sik.richtext.RichEditTextFormat.FORMAT_ITALIC
 import com.sik.richtext.RichEditTextFormat.FORMAT_STRIKETHROUGH
 import com.sik.richtext.RichEditTextFormat.FORMAT_UNDERLINE
 
+
 open class RichEditText @JvmOverloads constructor(
     context: Context, attrs: AttributeSet
 ) : AppCompatEditText(context, attrs) {
+    companion object {
+        /**
+         * Default Font Color
+         * 默认文字颜色
+         */
+        val DEFAULT_FONT_COLOR = Color.parseColor("#414141")
+
+        /**
+         * Default Max Line Count
+         * 默认最大行号
+         */
+        const val DEFAULT_MAX_LINE_COUNT = 44
+
+        /**
+         * Default Text Size
+         * 默认字体大小
+         */
+        const val DEFAULT_TEXT_SIZE = 12f
+    }
+
     private val mBackgroundLinePaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val mRect = Rect()
 
@@ -53,7 +76,7 @@ open class RichEditText @JvmOverloads constructor(
      * Show background line
      * 是否显示横线背景
      */
-    private var showBackgroundLine = false
+    private var showBackgroundLine: Boolean = true
 
     /**
      * On text size change listener
@@ -77,13 +100,13 @@ open class RichEditText @JvmOverloads constructor(
      * Font color
      * 字体颜色
      */
-    private var fontColor: Int = Color.parseColor("#414141")
+    private var fontColor: Int = DEFAULT_FONT_COLOR
 
     /**
      * Font size
      * 字体大小
      */
-    private var fontSize: Float = textSize
+    private var fontSize: Float = DEFAULT_TEXT_SIZE * (resources.displayMetrics.densityDpi / 72f)
 
     /**
      * Start input
@@ -101,74 +124,176 @@ open class RichEditText @JvmOverloads constructor(
      * Is style change
      * 样式修改
      */
-    var isStyleChange: Boolean = false
+    private var isStyleChange: Boolean = false
+
+    /**
+     * Is check page set
+     * 是否为检查页面设置
+     */
+    private var isCheckPageSet = false
+
+    /**
+     * Is turn page set
+     * 翻页设置
+     */
+    private var isTurnPageSet = false
+
+    /**
+     * Last check page time
+     * 最后检查空白页的时间
+     */
+    private var lastCheckPageTime: Long = 0
+
+    /**
+     * Max line count
+     * 最大行数
+     */
+    private val maxLineCount: Int = DEFAULT_MAX_LINE_COUNT
+
+    /**
+     * Is page mode
+     * 是否翻页模式
+     */
+    private var isPageMode: Boolean = false
+
+    /**
+     * Current page
+     * 当前页码
+     */
+    private var currentPage: Int = 0
+
+    /**
+     * Page count
+     * 页码和文字数
+     */
+    private var pageCount: MutableMap<Int, Int> = mutableMapOf()
+
+    /**
+     * Page start index
+     * 起始文字数
+     */
+    private var pageStartIndex: Int = 0
+
+    /**
+     * Line number view
+     * 行号控件
+     */
+    private var lineNumberView: LineNumberView? = null
+
+    /**
+     * Cursor position
+     * 光标位置
+     */
+    private var cursorPosition: Int = 0
+
+    /**
+     * Text watcher
+     * 文本修改监听
+     */
+    private lateinit var textWatcher: TextWatcher
 
     init {
         mBackgroundLinePaint.style = Paint.Style.STROKE
         mBackgroundLinePaint.color = Color.BLACK  // 设置线的颜色
+
+        background = null
     }
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        val textWatcher = object : TextWatcher {
+        setTextSize(TypedValue.COMPLEX_UNIT_PX, DEFAULT_TEXT_SIZE)
+        textWatcher = object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
-
+                if (!isCheckPageSet) {
+                    cursorPosition = selectionStart
+                }
             }
 
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                startInput = start
+                startInput = start + pageStartIndex
                 countInput = count
+                if (!isCheckPageSet) {
+                    cursorPosition += count - before
+                }
+                if (!isTurnPageSet || !isCheckPageSet) {
+                    if (before > count) { // 删除操作
+                        val deleteStart = start + pageStartIndex
+                        val deleteEnd = start + before + pageStartIndex
+                        spannableStringBuilder.delete(deleteStart, deleteEnd)
+                    } else if (count > before) { // 添加操作
+                        val insertStart = start + pageStartIndex
+                        val newText = s!!.subSequence(start, start + count)
+                        spannableStringBuilder.replace(insertStart, insertStart + before, newText)
+                    }
+                    lineNumberView?.markChangeCheck(
+                        start, before, count
+                    )
+                }
             }
 
             override fun afterTextChanged(s: Editable) {
                 if (!isStyleChange) {
                     isStyleChange = true
-                    val finalSelectionStart = selectionStart
-                    if (spannableStringBuilder != text) {
-                        spannableStringBuilder = SpannableStringBuilder(text)
+                    checkAndSetSpan()
+                    isTurnPageSet = true
+                    isCheckPageSet = true
+                    if (isPageMode) {
+                        isStyleChange = true
+                        text = spannableStringBuilder.subSequence(
+                            pageStartIndex,
+                            layout.getLineEnd(getLastLine()) + pageStartIndex
+                        ) as SpannableStringBuilder
+                        isTurnPageSet = false
+                        isCheckPageSet = false
+                        checkPage()
+                    } else {
+                        text = spannableStringBuilder
+                        isTurnPageSet = false
+                        isCheckPageSet = false
+                        checkPage()
                     }
-                    for (index in startInput until startInput + countInput) {
-                        checkAndSetSpan(index)
+                    if (isPageMode) {
+                        val subStringText = spannableStringBuilder.subSequence(
+                            layout.getLineStart(maxLineCount - 1),
+                            layout.getLineEnd(maxLineCount - 1)
+                        )
+                        val staticLayout = StaticLayout(
+                            subStringText,
+                            paint,
+                            width,
+                            Layout.Alignment.ALIGN_NORMAL,
+                            1f,
+                            0f,
+                            false
+                        )
+                        val lineWidth = staticLayout.getLineWidth(0) // 获取第一行的宽度
+                        if (lineWidth >= (width - paddingLeft - paddingRight) * 0.93f &&
+                            cursorPosition >= layout.getLineEnd(getLastLine()) - pageStartIndex
+                        ) {
+                            gotoNext()
+                            setSelection(cursorPosition - pageStartIndex)
+                        } else {
+                            setSelection(cursorPosition)
+                        }
+                    } else {
+                        setSelection(cursorPosition)
                     }
-                    text = spannableStringBuilder
-                    setSelection(finalSelectionStart)
                     isStyleChange = false
                 }
             }
 
         }
         addTextChangedListener(textWatcher)
+        postDelayed({
+            checkPage()
+            setSelection(0)
+        }, 20)
     }
 
-    private fun checkAndSetSpan(start: Int) {
-        if (isBoldEnable || isItalicEnable) {
-            spannableStringBuilder.setSpan(
-                StyleSpan(
-                    if (isBoldEnable && isItalicEnable) {
-                        Typeface.BOLD_ITALIC
-                    } else if (isBoldEnable) {
-                        Typeface.BOLD
-                    } else {
-                        Typeface.ITALIC
-                    }
-                ), start, start + 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
-        }
-        spannableStringBuilder.setSpan(
-            AbsoluteSizeSpan(
-                fontSize.toInt()
-            ), start, start + 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-        )
-        spannableStringBuilder.setSpan(
-            ForegroundColorSpan(
-                fontColor
-            ), start, start + 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-        )
-    }
 
     override fun onDraw(canvas: Canvas) {
         if (showBackgroundLine) {
-            val count = lineCount
+            val count = if (isPageMode) maxLineCount else lineCount
             val r = mRect
             val paint = mBackgroundLinePaint
             var startY = paddingTop
@@ -186,6 +311,16 @@ open class RichEditText @JvmOverloads constructor(
             }
         }
         super.onDraw(canvas)
+    }
+
+    /**
+     * Bind line number view
+     * 绑定行号控件
+     * @param lineNumberView
+     */
+    fun bindLineNumberView(lineNumberView: LineNumberView) {
+        lineNumberView.bindEditText(this)
+        this.lineNumberView = lineNumberView
     }
 
     /**
@@ -217,10 +352,164 @@ open class RichEditText @JvmOverloads constructor(
         this.onTextSizeChangeListener = onTextSizeChangeListener
     }
 
-    override fun setTextSize(unit: Int, size: Float) {
-        super.setTextSize(unit, size)
-        onTextSizeChangeListener(-1)
+    /**
+     * Set page mode
+     * 设置翻页模式
+     * @param isPageMode
+     */
+    fun setPageMode(isPageMode: Boolean) {
+        this.isPageMode = isPageMode
+        if (isPageMode) {
+            currentPage = 0
+            pageStartIndex = 0
+            pageCount.clear()
+            isStyleChange = true
+            isCheckPageSet = true
+            isTurnPageSet = true
+            text = spannableStringBuilder.subSequence(
+                layout.getLineStart(0) + pageStartIndex,
+                layout.getLineEnd(getLastLine())
+            ) as SpannableStringBuilder
+            lineNumberView?.updateLineNumbers()
+            lineNumberView?.dataNumSet()
+            lineNumberView?.postInvalidate()
+            isStyleChange = false
+            isCheckPageSet = false
+            isTurnPageSet = false
+        } else {
+            currentPage = 0
+            pageStartIndex = 0
+            pageCount.clear()
+            isStyleChange = true
+            isCheckPageSet = true
+            isTurnPageSet = true
+            text = spannableStringBuilder
+            lineNumberView?.updateLineNumbers()
+            lineNumberView?.dataNumSet()
+            lineNumberView?.postInvalidate()
+            isStyleChange = false
+            isCheckPageSet = false
+            isTurnPageSet = false
+        }
     }
+
+    /**
+     * Is page mode
+     * 是否为翻页模式
+     * @return
+     */
+    fun isPageMode(): Boolean {
+        return isPageMode
+    }
+
+    /**
+     * Goto next
+     * 下一页
+     */
+    fun gotoNext() {
+        if (!isPageMode) {
+            return
+        }
+        if (isBlank()) {
+            return
+        }
+        pageStartIndex += layout.getLineEnd(getLastLine())
+        pageCount[currentPage] =
+            layout.getLineEnd(getLastLine())
+        currentPage++
+        isStyleChange = true
+        isTurnPageSet = true
+        isCheckPageSet = true
+        checkNextPage()
+        text = spannableStringBuilder.subSequence(
+            pageStartIndex, spannableStringBuilder.length
+        ) as SpannableStringBuilder
+        text = spannableStringBuilder.subSequence(
+            pageStartIndex,
+            layout.getLineEnd(getLastLine()) + pageStartIndex
+        ) as SpannableStringBuilder
+        lineNumberView?.dataNumSet()
+        lineNumberView?.postInvalidate()
+        isStyleChange = false
+        isTurnPageSet = false
+        isCheckPageSet = false
+    }
+
+    /**
+     * Goto previous
+     * 上一页
+     */
+    fun gotoPrevious() {
+        if (!isPageMode) {
+            return
+        }
+        if (currentPage == 0) {
+            return
+        }
+        currentPage--
+        pageStartIndex -= (pageCount[currentPage] ?: 0)
+        isStyleChange = true
+        isTurnPageSet = true
+        isCheckPageSet = true
+        val pageLength = (pageCount[currentPage] ?: 0)
+        text = spannableStringBuilder.subSequence(
+            pageStartIndex, pageStartIndex + pageLength
+        ) as SpannableStringBuilder
+        lineNumberView?.dataNumSet()
+        lineNumberView?.postInvalidate()
+        pageCount[currentPage] = 0
+        isStyleChange = false
+        isTurnPageSet = false
+        isCheckPageSet = false
+    }
+
+    /**
+     * Get page start index
+     * 获取页起始下标
+     * @return
+     */
+    fun getPageStartIndex(): Int {
+        return pageStartIndex
+    }
+
+    /**
+     * Get current mark position
+     * 获取当前打点位置
+     * @return
+     */
+    fun getCurrentMarkPosition(): Int {
+        return if (isPageMode) {
+            selectionStart + pageStartIndex
+        } else {
+            selectionStart
+        }
+    }
+
+    /**
+     * Get current page position
+     * 获取当前页面的标记位置范围
+     * @return
+     */
+    fun getCurrentPagePosition(): IntArray {
+        return if (isPageMode) {
+            intArrayOf(
+                pageStartIndex,
+                layout.getLineEnd(getLastLine()) + pageStartIndex
+            )
+        } else {
+            intArrayOf(0, spannableStringBuilder.length)
+        }
+    }
+
+    /**
+     * Get spannable string builder
+     * 获取文本带样式
+     * @return
+     */
+    fun getSpannableStringBuilder(): SpannableStringBuilder {
+        return spannableStringBuilder
+    }
+
 
     /**
      * Format
@@ -231,11 +520,10 @@ open class RichEditText @JvmOverloads constructor(
     @JvmOverloads
     fun format(richEditTextFormat: RichEditTextFormat, value: Any? = null) {
         isStyleChange = true
-        val finalSelectionStart = selectionStart
-        val finalSelectionEnd = selectionEnd
-        if (spannableStringBuilder != text) {
-            spannableStringBuilder = SpannableStringBuilder(text)
-        }
+        isTurnPageSet = true
+        isCheckPageSet = true
+        val finalSelectionStart = selectionStart + pageStartIndex
+        val finalSelectionEnd = selectionEnd + pageStartIndex
         when (richEditTextFormat) {
             FORMAT_HEADING_1 -> {
                 setHeading(1.5f)
@@ -259,18 +547,25 @@ open class RichEditText @JvmOverloads constructor(
             FORMAT_HEADING_REMOVE -> {
                 val blockPosition = getBlockPosition()
                 removeSpan(
-                    blockPosition.first, blockPosition.second, StyleSpan::class.java
+                    blockPosition.first + pageStartIndex,
+                    blockPosition.second + pageStartIndex,
+                    StyleSpan::class.java
                 )
                 removeSpan(
-                    blockPosition.first, blockPosition.second, RelativeSizeSpan::class.java
+                    blockPosition.first + pageStartIndex,
+                    blockPosition.second + pageStartIndex,
+                    RelativeSizeSpan::class.java
                 )
             }
 
             FORMAT_BOLD -> {
                 isBoldEnable = !isBoldEnable
                 if (selectionStart != selectionEnd) {
-                    val boldStyleSpan =
-                        getSpans(selectionStart, selectionEnd, StyleSpan::class.java)
+                    val boldStyleSpan = getSpans(
+                        selectionStart + pageStartIndex,
+                        selectionEnd + pageStartIndex,
+                        StyleSpan::class.java
+                    )
                     if (boldStyleSpan.isEmpty()) {
                         setBold(null)
                     } else {
@@ -288,8 +583,11 @@ open class RichEditText @JvmOverloads constructor(
             FORMAT_ITALIC -> {
                 isItalicEnable = !isItalicEnable
                 if (selectionStart != selectionEnd) {
-                    val italicStyleSpan =
-                        getSpans(selectionStart, selectionEnd, StyleSpan::class.java)
+                    val italicStyleSpan = getSpans(
+                        selectionStart + pageStartIndex,
+                        selectionEnd + pageStartIndex,
+                        StyleSpan::class.java
+                    )
                     if (italicStyleSpan.isEmpty()) {
                         setItalic(null)
                     } else {
@@ -305,26 +603,44 @@ open class RichEditText @JvmOverloads constructor(
             }
 
             FORMAT_UNDERLINE -> {
-                if (hasFormat(selectionStart, selectionEnd, UnderlineSpan::class.java)) {
-                    removeSpan(selectionStart, selectionEnd, UnderlineSpan::class.java)
+                if (hasFormat(
+                        selectionStart + pageStartIndex,
+                        selectionEnd + pageStartIndex,
+                        UnderlineSpan::class.java
+                    )
+                ) {
+                    removeSpan(
+                        selectionStart + pageStartIndex,
+                        selectionEnd + pageStartIndex,
+                        UnderlineSpan::class.java
+                    )
                 } else {
                     spannableStringBuilder.setSpan(
                         UnderlineSpan(),
-                        selectionStart,
-                        selectionEnd,
+                        selectionStart + pageStartIndex,
+                        selectionEnd + pageStartIndex,
                         Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                     )
                 }
             }
 
             FORMAT_STRIKETHROUGH -> {
-                if (hasFormat(selectionStart, selectionEnd, StrikethroughSpan::class.java)) {
-                    removeSpan(selectionStart, selectionEnd, StrikethroughSpan::class.java)
+                if (hasFormat(
+                        selectionStart + pageStartIndex,
+                        selectionEnd + pageStartIndex,
+                        StrikethroughSpan::class.java
+                    )
+                ) {
+                    removeSpan(
+                        selectionStart + pageStartIndex,
+                        selectionEnd + pageStartIndex,
+                        StrikethroughSpan::class.java
+                    )
                 } else {
                     spannableStringBuilder.setSpan(
                         StrikethroughSpan(),
-                        selectionStart,
-                        selectionEnd,
+                        selectionStart + pageStartIndex,
+                        selectionEnd + pageStartIndex,
                         Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                     )
                 }
@@ -340,14 +656,23 @@ open class RichEditText @JvmOverloads constructor(
                 } else {
                     textSize
                 }
-                if (hasFormat(selectionStart, selectionEnd, AbsoluteSizeSpan::class.java)) {
-                    removeSpan(selectionStart, selectionEnd, AbsoluteSizeSpan::class.java)
+                if (hasFormat(
+                        selectionStart + pageStartIndex,
+                        selectionEnd + pageStartIndex,
+                        AbsoluteSizeSpan::class.java
+                    )
+                ) {
+                    removeSpans(
+                        selectionStart + pageStartIndex,
+                        selectionEnd + pageStartIndex,
+                        AbsoluteSizeSpan::class.java
+                    )
                 }
                 if (value != null) {
                     spannableStringBuilder.setSpan(
                         AbsoluteSizeSpan(fontSize.toInt()),
-                        selectionStart,
-                        selectionEnd,
+                        selectionStart + pageStartIndex,
+                        selectionEnd + pageStartIndex,
                         Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                     )
                 }
@@ -359,13 +684,25 @@ open class RichEditText @JvmOverloads constructor(
                 } else {
                     value as Int
                 }
-                if (hasFormat(selectionStart, selectionEnd, ForegroundColorSpan::class.java)) {
-                    removeSpan(selectionStart, selectionEnd, ForegroundColorSpan::class.java)
+                if (hasFormat(
+                        selectionStart + pageStartIndex,
+                        selectionEnd + pageStartIndex,
+                        ForegroundColorSpan::class.java
+                    )
+                ) {
+                    removeSpans(
+                        selectionStart + pageStartIndex,
+                        selectionEnd + pageStartIndex,
+                        ForegroundColorSpan::class.java
+                    )
                 }
                 spannableStringBuilder.setSpan(
                     ForegroundColorSpan(
                         fontColor
-                    ), selectionStart, selectionEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                    ),
+                    selectionStart + pageStartIndex,
+                    selectionEnd + pageStartIndex,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
             }
 
@@ -383,8 +720,22 @@ open class RichEditText @JvmOverloads constructor(
         }
         text = spannableStringBuilder
         isStyleChange = false
+        isTurnPageSet = false
+        isCheckPageSet = false
         setSelection(finalSelectionStart, finalSelectionEnd)
-        onTextSizeChangeListener(getSelectionLine(finalSelectionStart))
+        if (richEditTextFormat in arrayOf(
+                FORMAT_HEADING_1,
+                FORMAT_HEADING_2,
+                FORMAT_HEADING_3,
+                FORMAT_HEADING_4,
+                FORMAT_HEADING_5,
+                FORMAT_HEADING_REMOVE
+            )
+        ) {
+            onTextSizeChangeListener(-1)
+        } else {
+            onTextSizeChangeListener(getSelectionLine(finalSelectionStart))
+        }
     }
 
     /**
@@ -409,15 +760,15 @@ open class RichEditText @JvmOverloads constructor(
      */
     private fun getOutSidePosition(spans: MutableList<Pair<Int, Int>>): MutableList<Pair<Int, Int>> {
         val result = mutableListOf<Pair<Int, Int>>()
-        var lastEnd = selectionStart
+        var lastEnd = selectionStart + pageStartIndex
         for (span in spans) {
             if (span.first > lastEnd) {
                 result.add(Pair(lastEnd, span.first))
             }
             lastEnd = span.second
         }
-        if (lastEnd < selectionEnd) {
-            result.add(Pair(lastEnd, selectionEnd))
+        if (lastEnd < selectionEnd + pageStartIndex) {
+            result.add(Pair(lastEnd, selectionEnd + pageStartIndex))
         }
         return result
     }
@@ -428,8 +779,8 @@ open class RichEditText @JvmOverloads constructor(
      */
     private fun setBold(
         boldStyleSpan: StyleSpan?,
-        start: Int = selectionStart,
-        end: Int = selectionEnd
+        start: Int = selectionStart + pageStartIndex,
+        end: Int = selectionEnd + pageStartIndex
     ) {
         val spansStart = spannableStringBuilder.getSpanStart(boldStyleSpan)
         val spanEnd = spannableStringBuilder.getSpanEnd(boldStyleSpan)
@@ -475,8 +826,8 @@ open class RichEditText @JvmOverloads constructor(
      */
     private fun setItalic(
         italicStyleSpan: StyleSpan?,
-        start: Int = selectionStart,
-        end: Int = selectionEnd
+        start: Int = selectionStart + pageStartIndex,
+        end: Int = selectionEnd + pageStartIndex
     ) {
         if (italicStyleSpan != null) {
             val spanStart = spannableStringBuilder.getSpanStart(italicStyleSpan)
@@ -522,8 +873,11 @@ open class RichEditText @JvmOverloads constructor(
      */
     private fun setTextAlignmentSpan(alignType: Int) {
         val blockPosition = getBlockPosition()
-        val alignmentSpan =
-            getSpan(blockPosition.first, blockPosition.second, AlignmentSpan::class.java)
+        val alignmentSpan = getSpan(
+            blockPosition.first + pageStartIndex,
+            blockPosition.second + pageStartIndex,
+            AlignmentSpan::class.java
+        )
         if (alignmentSpan != null) {
             spannableStringBuilder.removeSpan(alignmentSpan)
         }
@@ -532,8 +886,8 @@ open class RichEditText @JvmOverloads constructor(
                 if (alignmentSpan?.alignment != Layout.Alignment.ALIGN_NORMAL) {
                     spannableStringBuilder.setSpan(
                         AlignmentSpan.Standard(Layout.Alignment.ALIGN_NORMAL),
-                        blockPosition.first,
-                        blockPosition.second,
+                        blockPosition.first + pageStartIndex,
+                        blockPosition.second + pageStartIndex,
                         Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                     )
                 }
@@ -543,8 +897,8 @@ open class RichEditText @JvmOverloads constructor(
                 if (alignmentSpan?.alignment != Layout.Alignment.ALIGN_CENTER) {
                     spannableStringBuilder.setSpan(
                         AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
-                        blockPosition.first,
-                        blockPosition.second,
+                        blockPosition.first + pageStartIndex,
+                        blockPosition.second + pageStartIndex,
                         Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                     )
                 }
@@ -554,8 +908,8 @@ open class RichEditText @JvmOverloads constructor(
                 if (alignmentSpan?.alignment != Layout.Alignment.ALIGN_OPPOSITE) {
                     spannableStringBuilder.setSpan(
                         AlignmentSpan.Standard(Layout.Alignment.ALIGN_OPPOSITE),
-                        blockPosition.first,
-                        blockPosition.second,
+                        blockPosition.first + pageStartIndex,
+                        blockPosition.second + pageStartIndex,
                         Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                     )
                 }
@@ -571,25 +925,31 @@ open class RichEditText @JvmOverloads constructor(
     private fun setHeading(headingValue: Float) {
         val blockPosition = getBlockPosition()
         if (hasFormat(
-                blockPosition.first, blockPosition.second, RelativeSizeSpan::class.java
+                blockPosition.first + pageStartIndex,
+                blockPosition.second + pageStartIndex,
+                RelativeSizeSpan::class.java
             )
         ) {
             val spans: Array<RelativeSizeSpan> = spannableStringBuilder.getSpans(
-                blockPosition.first, blockPosition.second, RelativeSizeSpan::class.java
+                blockPosition.first + pageStartIndex,
+                blockPosition.second + pageStartIndex,
+                RelativeSizeSpan::class.java
             )
             for (span in spans) {
                 if (span.sizeChange == headingValue) {
                     spannableStringBuilder.removeSpan(span)
                     removeSpan(
-                        blockPosition.first, blockPosition.second, StyleSpan::class.java
+                        blockPosition.first + pageStartIndex,
+                        blockPosition.second + pageStartIndex,
+                        StyleSpan::class.java
                     )
                     break
                 } else if (span.sizeChange != headingValue) {
                     spannableStringBuilder.removeSpan(span)
                     spannableStringBuilder.setSpan(
                         RelativeSizeSpan(headingValue),
-                        blockPosition.first,
-                        blockPosition.second,
+                        blockPosition.first + pageStartIndex,
+                        blockPosition.second + pageStartIndex,
                         Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                     )
                     break
@@ -598,14 +958,14 @@ open class RichEditText @JvmOverloads constructor(
         } else {
             spannableStringBuilder.setSpan(
                 RelativeSizeSpan(headingValue),
-                blockPosition.first,
-                blockPosition.second,
+                blockPosition.first + pageStartIndex,
+                blockPosition.second + pageStartIndex,
                 Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
             )
             spannableStringBuilder.setSpan(
                 StyleSpan(Typeface.BOLD),
-                blockPosition.first,
-                blockPosition.second,
+                blockPosition.first + pageStartIndex,
+                blockPosition.second + pageStartIndex,
                 Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
             )
         }
@@ -686,7 +1046,6 @@ open class RichEditText @JvmOverloads constructor(
         if (spannableStringBuilder.length < start) {
             return null
         }
-        val spans = mutableListOf<T>()
         spannableStringBuilder.let {
             val allSpans: Array<*> = it.getSpans(
                 start, end, spanClass
@@ -729,6 +1088,31 @@ open class RichEditText @JvmOverloads constructor(
     }
 
     /**
+     * Remove spans
+     * 移除所有效果
+     * @param start
+     * @param end
+     * @param spanClass
+     */
+    private fun removeSpans(start: Int, end: Int, spanClass: Class<*>) {
+        if (spannableStringBuilder.length < start) {
+            return
+        }
+        spannableStringBuilder.let {
+            val spans: Array<*> = it.getSpans(
+                start, end, spanClass
+            )
+            for (span in spans) {
+                if (span != null) {
+                    if (span.javaClass == spanClass) {
+                        it.removeSpan(span)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Get block position
      * 获取文本块
      * @return
@@ -740,5 +1124,121 @@ open class RichEditText @JvmOverloads constructor(
             return 0 to nextNewLine
         }
         return previousNewLine to nextNewLine
+    }
+
+    /**
+     * Check next page
+     * 检查下一页是否存在足够数据
+     */
+    private fun checkNextPage() {
+        val takeLast = spannableStringBuilder.subSequence(
+            pageStartIndex - (pageCount[currentPage] ?: 0),
+            pageStartIndex
+        ).split("\n").takeLast(maxLineCount)
+        if (takeLast.size < maxLineCount) {
+            for (i in 0 until maxLineCount - takeLast.size) {
+                spannableStringBuilder.append("\n")
+            }
+        }
+    }
+
+    /**
+     * Check page
+     * 检查空白页
+     */
+    private fun checkPage() {
+        if (System.currentTimeMillis() - lastCheckPageTime < 300) {
+            lastCheckPageTime = System.currentTimeMillis()
+            return
+        }
+        if (isCheckPageSet) {
+            return
+        }
+        lastCheckPageTime = System.currentTimeMillis()
+        val lastMaxLineCount =
+            spannableStringBuilder.subSequence(pageStartIndex, spannableStringBuilder.length)
+                .split("\n").takeLast(maxLineCount)
+        if (lastMaxLineCount.size < maxLineCount) {
+            isStyleChange = true
+            isCheckPageSet = true
+            for (i in 0 until maxLineCount - lastMaxLineCount.size) {
+                append("\n")
+            }
+            onTextSizeChangeListener(-1)
+            isStyleChange = false
+            isCheckPageSet = false
+        } else {
+            if (!lastMaxLineCount.all { it.isEmpty() } && !isPageMode) {
+                isStyleChange = true
+                isCheckPageSet = true
+                for (i in 0 until maxLineCount) {
+                    append("\n")
+                }
+                onTextSizeChangeListener(-1)
+                isStyleChange = false
+                isCheckPageSet = false
+            }
+        }
+    }
+
+    /**
+     * Check and set span
+     * 检查并设置样式
+     * @param start
+     */
+    private fun checkAndSetSpan() {
+        if (!hasFormat(startInput, startInput + countInput, ForegroundColorSpan::class.java)) {
+            if (isBoldEnable || isItalicEnable) {
+                spannableStringBuilder.setSpan(
+                    StyleSpan(
+                        if (isBoldEnable && isItalicEnable) {
+                            Typeface.BOLD_ITALIC
+                        } else if (isBoldEnable) {
+                            Typeface.BOLD
+                        } else {
+                            Typeface.ITALIC
+                        }
+                    ), startInput, startInput + countInput, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+        }
+        if (!hasFormat(startInput, startInput + countInput, AbsoluteSizeSpan::class.java)) {
+            spannableStringBuilder.setSpan(
+                AbsoluteSizeSpan(
+                    fontSize.toInt()
+                ), startInput, startInput + countInput, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+        if (!hasFormat(startInput, startInput + countInput, ForegroundColorSpan::class.java)) {
+            spannableStringBuilder.setSpan(
+                ForegroundColorSpan(
+                    fontColor
+                ), startInput, startInput + countInput, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+    }
+
+    /**
+     * Get last line
+     * 获取最后一行的行号
+     * @return
+     */
+    private fun getLastLine(): Int {
+        return maxLineCount - 1
+    }
+
+    /**
+     * Is blank
+     * 是否为空白页
+     */
+    private fun isBlank(): Boolean {
+        val lastMaxLineCount = text?.split("\n")?.takeLast(maxLineCount - 1) ?: arrayListOf()
+        return lastMaxLineCount.all { it.isEmpty() }
+    }
+
+    override fun setTextSize(unit: Int, size: Float) {
+        val pixels = size * (resources.displayMetrics.densityDpi / 72f)
+        super.setTextSize(TypedValue.COMPLEX_UNIT_PX, pixels)
+        onTextSizeChangeListener(-1)
     }
 }
