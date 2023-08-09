@@ -22,6 +22,7 @@ import android.text.style.StyleSpan
 import android.text.style.UnderlineSpan
 import android.util.AttributeSet
 import android.util.TypedValue
+import android.view.ViewTreeObserver
 import androidx.appcompat.widget.AppCompatEditText
 import com.sik.richtext.RichEditTextFormat.FORMAT_ALIGN_CENTER
 import com.sik.richtext.RichEditTextFormat.FORMAT_ALIGN_LEFT
@@ -61,6 +62,12 @@ open class RichEditText @JvmOverloads constructor(
          * 默认字体大小
          */
         const val DEFAULT_TEXT_SIZE = 12f
+
+        /**
+         * Auto save time
+         * 自动保存时间间隔
+         */
+        var autoSaveTime: Long = 5 * 1000
     }
 
     private val mBackgroundLinePaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -106,7 +113,7 @@ open class RichEditText @JvmOverloads constructor(
      * Font size
      * 字体大小
      */
-    private var fontSize: Float = DEFAULT_TEXT_SIZE * (resources.displayMetrics.densityDpi / 72f)
+    private var fontSize: Float = DEFAULT_TEXT_SIZE
 
     /**
      * Start input
@@ -192,11 +199,18 @@ open class RichEditText @JvmOverloads constructor(
      */
     private lateinit var textWatcher: TextWatcher
 
+    /**
+     * Save listener
+     * 保存监听
+     */
+    private var autoSaveListener: (String) -> Unit = {}
+
     init {
         mBackgroundLinePaint.style = Paint.Style.STROKE
         mBackgroundLinePaint.color = Color.BLACK  // 设置线的颜色
 
         background = null
+        setTextData("")
     }
 
     override fun onAttachedToWindow() {
@@ -284,10 +298,7 @@ open class RichEditText @JvmOverloads constructor(
 
         }
         addTextChangedListener(textWatcher)
-        postDelayed({
-            checkPage()
-            setSelection(0)
-        }, 20)
+        startAutoSave()
     }
 
 
@@ -311,6 +322,16 @@ open class RichEditText @JvmOverloads constructor(
             }
         }
         super.onDraw(canvas)
+    }
+
+    /**
+     * Set auto save listener
+     * 设置自动保存监听
+     * @param autoSaveListener
+     * @receiver
+     */
+    fun setAutoSaveListener(autoSaveListener: (String) -> Unit = {}) {
+        this.autoSaveListener = autoSaveListener
     }
 
     /**
@@ -428,6 +449,7 @@ open class RichEditText @JvmOverloads constructor(
             pageStartIndex,
             layout.getLineEnd(getLastLine()) + pageStartIndex
         ) as SpannableStringBuilder
+        lineNumberView?.updateLineNumbers()
         lineNumberView?.dataNumSet()
         lineNumberView?.postInvalidate()
         isStyleChange = false
@@ -455,6 +477,7 @@ open class RichEditText @JvmOverloads constructor(
         text = spannableStringBuilder.subSequence(
             pageStartIndex, pageStartIndex + pageLength
         ) as SpannableStringBuilder
+        lineNumberView?.updateLineNumbers()
         lineNumberView?.dataNumSet()
         lineNumberView?.postInvalidate()
         pageCount[currentPage] = 0
@@ -510,6 +533,39 @@ open class RichEditText @JvmOverloads constructor(
         return spannableStringBuilder
     }
 
+    /**
+     * Set text data
+     * 设置文本数据
+     */
+    fun setTextData(html: String) {
+        viewTreeObserver.addOnGlobalLayoutListener(object :
+            ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                // 在布局完成后执行的代码
+                if (html.isEmpty()) {
+                    checkPage()
+                } else {
+                    isStyleChange = true
+                    isTurnPageSet = true
+                    isCheckPageSet = true
+                    spannableStringBuilder = RichEditTextConvert.convertFromHtml(html)
+                    text = spannableStringBuilder
+                    isStyleChange = false
+                    isTurnPageSet = false
+                    isCheckPageSet = false
+                }
+                postDelayed({
+                    lineNumberView?.updateLineNumbers()
+                    lineNumberView?.dataNumSet()
+                    lineNumberView?.postInvalidate()
+                }, 20)
+                setSelection(0)
+                // 移除监听器，以防止多次调用
+                viewTreeObserver.removeOnGlobalLayoutListener(this)
+            }
+        })
+    }
+
 
     /**
      * Format
@@ -546,12 +602,12 @@ open class RichEditText @JvmOverloads constructor(
 
             FORMAT_HEADING_REMOVE -> {
                 val blockPosition = getBlockPosition()
-                removeSpan(
+                removeSpans(
                     blockPosition.first + pageStartIndex,
                     blockPosition.second + pageStartIndex,
                     StyleSpan::class.java
                 )
-                removeSpan(
+                removeSpans(
                     blockPosition.first + pageStartIndex,
                     blockPosition.second + pageStartIndex,
                     RelativeSizeSpan::class.java
@@ -924,6 +980,16 @@ open class RichEditText @JvmOverloads constructor(
      */
     private fun setHeading(headingValue: Float) {
         val blockPosition = getBlockPosition()
+        removeSpans(
+            blockPosition.first + pageStartIndex,
+            blockPosition.second + pageStartIndex,
+            AbsoluteSizeSpan::class.java
+        )
+        removeSpans(
+            blockPosition.first + pageStartIndex,
+            blockPosition.second + pageStartIndex,
+            StyleSpan::class.java
+        )
         if (hasFormat(
                 blockPosition.first + pageStartIndex,
                 blockPosition.second + pageStartIndex,
@@ -938,10 +1004,10 @@ open class RichEditText @JvmOverloads constructor(
             for (span in spans) {
                 if (span.sizeChange == headingValue) {
                     spannableStringBuilder.removeSpan(span)
-                    removeSpan(
+                    removeSpans(
                         blockPosition.first + pageStartIndex,
                         blockPosition.second + pageStartIndex,
-                        StyleSpan::class.java
+                        RelativeSizeSpan::class.java
                     )
                     break
                 } else if (span.sizeChange != headingValue) {
@@ -1179,6 +1245,15 @@ open class RichEditText @JvmOverloads constructor(
                 isCheckPageSet = false
             }
         }
+    }
+
+    /**
+     * Start auto save
+     * 开启自动保存
+     */
+    private fun startAutoSave() {
+        autoSaveListener(RichEditTextConvert.convertToHtml(spannableStringBuilder))
+        postDelayed({ startAutoSave() }, autoSaveTime)
     }
 
     /**

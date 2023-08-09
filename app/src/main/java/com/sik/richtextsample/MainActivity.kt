@@ -7,7 +7,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
-import android.text.SpannableStringBuilder
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.blankj.utilcode.util.FileIOUtils
@@ -25,6 +24,8 @@ import java.io.File
 class MainActivity : AppCompatActivity() {
     private lateinit var htmlFilePath: String
     private lateinit var lineNumberView: LineNumberView
+
+    private val savePath = "/sdcard/download/output.html"
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -62,7 +63,7 @@ class MainActivity : AppCompatActivity() {
             visualEditor.format(RichEditTextFormat.FORMAT_STRIKETHROUGH)
         }
         findViewById<TextView>(R.id.font_size).setOnClickListener {
-            visualEditor.format(RichEditTextFormat.FORMAT_FONT_SIZE, 150)
+            visualEditor.format(RichEditTextFormat.FORMAT_FONT_SIZE, 50)
         }
         findViewById<TextView>(R.id.font_color).setOnClickListener {
             visualEditor.format(RichEditTextFormat.FORMAT_FONT_COLOR, Color.RED)
@@ -111,6 +112,12 @@ class MainActivity : AppCompatActivity() {
             startActivity(intent)
         }
         visualEditor.bindLineNumberView(lineNumberView)
+        visualEditor.setAutoSaveListener {
+            FileIOUtils.writeFileFromString(savePath, it)
+        }
+        if (File(savePath).exists()){
+            visualEditor.setTextData(FileIOUtils.readFile2String(savePath))
+        }
 //        visualEditor.setTextData(FileIOUtils.readFile2String("/sdcard/download/output.html"))
     }
 

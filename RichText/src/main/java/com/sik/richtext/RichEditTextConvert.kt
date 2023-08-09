@@ -3,6 +3,7 @@ package com.sik.richtext
 import android.graphics.Color
 import android.graphics.Typeface
 import android.text.Layout
+import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.AlignmentSpan
@@ -16,6 +17,8 @@ import org.apache.poi.xwpf.usermodel.UnderlinePatterns
 import org.apache.poi.xwpf.usermodel.XWPFDocument
 import org.apache.poi.xwpf.usermodel.XWPFParagraph
 import org.apache.poi.xwpf.usermodel.XWPFRun
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Element
 import java.io.File
 import java.io.FileOutputStream
 
@@ -45,7 +48,7 @@ object RichEditTextConvert {
                 val alignment = when (alignmentSpans[0].alignment) {
                     Layout.Alignment.ALIGN_NORMAL -> "left"
                     Layout.Alignment.ALIGN_CENTER -> "center"
-                    Layout.Alignment.ALIGN_OPPOSITE -> "opposite"
+                    Layout.Alignment.ALIGN_OPPOSITE -> "right"
                     else -> "left"
                 }
                 html.append("<div style=\"text-align:$alignment;\">")
@@ -146,6 +149,11 @@ object RichEditTextConvert {
                                 openingTags.add("<i>")
                                 closingTags.add("</i>")
                             }
+
+                            Typeface.BOLD_ITALIC -> {
+                                openingTags.add("<b><i>")
+                                closingTags.add("</i></b>")
+                            }
                         }
                     }
 
@@ -192,6 +200,211 @@ object RichEditTextConvert {
         }
 
         return html.toString()
+    }
+
+    /**
+     * Convert from html
+     * html转显示
+     * @param html
+     * @return
+     */
+    fun convertFromHtml(html: String): SpannableStringBuilder {
+        val document = Jsoup.parse(html)
+        val spannable = SpannableStringBuilder()
+
+        for (element in document.body().children()) {
+            when (element.tagName()) {
+                "div" -> {
+                    val alignment =
+                        element.attr("style").substringAfter("text-align:").substringBefore(";")
+                    val alignmentSpan = when (alignment) {
+                        "center" -> AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER)
+                        "right" -> AlignmentSpan.Standard(Layout.Alignment.ALIGN_OPPOSITE)
+                        else -> AlignmentSpan.Standard(Layout.Alignment.ALIGN_NORMAL)
+                    }
+                    spannable.append(parseElement(element))
+                    spannable.setSpan(
+                        alignmentSpan,
+                        spannable.length - element.text().length,
+                        spannable.length,
+                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+                "h1" -> {
+                    spannable.append(parseElement(element))
+                    spannable.setSpan(
+                        RelativeSizeSpan(1.5f),
+                        spannable.length - element.text().length,
+                        spannable.length,
+                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+
+                "h2" -> {
+                    spannable.append(parseElement(element))
+                    spannable.setSpan(
+                        RelativeSizeSpan(1.4f),
+                        spannable.length - element.text().length,
+                        spannable.length,
+                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+
+                "h3" -> {
+                    spannable.append(parseElement(element))
+                    spannable.setSpan(
+                        RelativeSizeSpan(1.3f),
+                        spannable.length - element.text().length,
+                        spannable.length,
+                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+
+                "h4" -> {
+                    spannable.append(parseElement(element))
+                    spannable.setSpan(
+                        RelativeSizeSpan(1.2f),
+                        spannable.length - element.text().length,
+                        spannable.length,
+                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+
+                "h5" -> {
+                    spannable.append(parseElement(element))
+                    spannable.setSpan(
+                        RelativeSizeSpan(1.1f),
+                        spannable.length - element.text().length,
+                        spannable.length,
+                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+                "br" -> {
+                    spannable.append("\n")
+                }
+
+                else -> spannable.append(parseElement(element))
+            }
+            if (element.children().isNotEmpty()){
+                when (element.children()[0].tagName()) {
+                    "h1" -> {
+                        spannable.setSpan(
+                            RelativeSizeSpan(1.5f),
+                            spannable.length - element.text().length,
+                            spannable.length,
+                            Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
+
+                    "h2" -> {
+                        spannable.setSpan(
+                            RelativeSizeSpan(1.4f),
+                            spannable.length - element.text().length,
+                            spannable.length,
+                            Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
+
+                    "h3" -> {
+                        spannable.setSpan(
+                            RelativeSizeSpan(1.3f),
+                            spannable.length - element.text().length,
+                            spannable.length,
+                            Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
+
+                    "h4" -> {
+                        spannable.setSpan(
+                            RelativeSizeSpan(1.2f),
+                            spannable.length - element.text().length,
+                            spannable.length,
+                            Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
+
+                    "h5" -> {
+                        spannable.setSpan(
+                            RelativeSizeSpan(1.1f),
+                            spannable.length - element.text().length,
+                            spannable.length,
+                            Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
+                }
+            }
+        }
+        return spannable
+    }
+
+    private fun parseElement(element: Element): SpannableStringBuilder {
+        val spannable = SpannableStringBuilder()
+        val text = element.text()
+        if (element.children().isNotEmpty()) {
+            for (child in element.children()) {
+                spannable.append(parseElement(child))
+            }
+        } else {
+            spannable.append(text)
+        }
+
+        when (element.tagName()) {
+            "b" -> spannable.setSpan(
+                StyleSpan(Typeface.BOLD),
+                0,
+                text.length,
+                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+
+            "i" -> spannable.setSpan(
+                StyleSpan(Typeface.ITALIC),
+                0,
+                text.length,
+                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+
+            "u" -> spannable.setSpan(
+                UnderlineSpan(),
+                0,
+                text.length,
+                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+
+            "del" -> spannable.setSpan(
+                StrikethroughSpan(),
+                0,
+                text.length,
+                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+
+            "br" -> {
+                spannable.append("\n")
+            }
+
+            "font" -> {
+                val color = element.attr("color")
+                if (color.isNotEmpty()) {
+                    spannable.setSpan(
+                        ForegroundColorSpan(Color.parseColor(color)),
+                        0,
+                        text.length,
+                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+                val fontSize = element.attr("font-size").replace("px", "").toIntOrNull()
+                if (fontSize != null) {
+                    spannable.setSpan(
+                        AbsoluteSizeSpan(fontSize),
+                        0,
+                        text.length,
+                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+            }
+            // 其他标题大小
+        }
+
+        return spannable
     }
 
     /**
